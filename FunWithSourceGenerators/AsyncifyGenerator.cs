@@ -2,7 +2,6 @@
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -46,7 +45,7 @@ namespace System
             foreach (var method in receiver.CandidateMethods)
             {
                 SemanticModel model = compilation.GetSemanticModel(method.SyntaxTree);
-                var methodSymbol = model.GetDeclaredSymbol(method) as IMethodSymbol;
+                var methodSymbol = model.GetDeclaredSymbol(method);
                 if (methodSymbol.GetAttributes().Any(ad => ad.AttributeClass.Equals(attributeSymbol, SymbolEqualityComparer.Default)))
                 {
                     methodSymbols.Add(methodSymbol);
@@ -55,12 +54,12 @@ namespace System
 
             foreach (var group in methodSymbols.GroupBy(f => f.ContainingType))
             {
-                string classSource = ProcessClass(group.Key, group.ToList(), context);
+                string classSource = ProcessClass(group.Key, group.ToList());
                 context.AddSource($"{group.Key.Name}_asyncify.cs", SourceText.From(classSource, Encoding.UTF8));
             }
         }
 
-        private string ProcessClass(INamedTypeSymbol classSymbol, List<IMethodSymbol> methods, SourceGeneratorContext context)
+        private string ProcessClass(INamedTypeSymbol classSymbol, List<IMethodSymbol> methods)
         {
             if (!classSymbol.ContainingSymbol.Equals(classSymbol.ContainingNamespace, SymbolEqualityComparer.Default))
             {
@@ -82,53 +81,41 @@ namespace {namespaceName}
             // create properties for each field 
             foreach (var methodSymbol in methods)
             {
-                ProcessMethod(source, methodSymbol, context);
+                ProcessMethod(source, methodSymbol);
             }
 
             source.Append("} }");
             return source.ToString();
         }
 
-        private void ProcessMethod(StringBuilder source, IMethodSymbol methodSymbol, SourceGeneratorContext context)
+        private void ProcessMethod(StringBuilder source, IMethodSymbol methodSymbol)
         {
             if (methodSymbol.IsAsync)
             {
-                // Can't asyncify async methods!
+                // Already async, maybe emit a diagnostic?
                 return;
             }
 
-            // get the name and type of the field
-            string methodName = methodSymbol.Name;
-            ITypeSymbol returnType = methodSymbol.ReturnType;
-
-            //// get the AutoNotify attribute from the field, and any associated data
-            //AttributeData attributeData = methodSymbol.GetAttributes().Single(ad => ad.AttributeClass.Equals(attributeSymbol, SymbolEqualityComparer.Default));
-            //TypedConstant overridenNameOpt = attributeData.NamedArguments.SingleOrDefault(kvp => kvp.Key == "PropertyName").Value;
-
-            string asyncMethodName = $"{methodName}Async";
-            if (asyncMethodName.Length == 0 || asyncMethodName == methodName)
-            {
-                //TODO: issue a diagnostic that we can't process this field
-                return;
-            }
-
-            var asyncReturnType = "Task";
+            // SayHello => SayHelloAsync
+            string asyncMethodName = $"{methodSymbol.Name}Async";
             var staticModifier = methodSymbol.IsStatic ? "static" : string.Empty;
 
-            if (returnType.Name != "Void")
-            {
-                asyncReturnType = $"Task<{returnType.Name}>";
-            }
+            // void => Task, bool => Task<bool>
+            var asyncReturnType = methodSymbol.ReturnType.Name == "Void" ? 
+                                  "Task" :
+                                  $"Task<{methodSymbol.ReturnType.Name}>";
 
+            // int number, string name
             var parameters = string.Join(",", methodSymbol.Parameters.Select(p => $"{p.Type} {p.Name}"));
+            // number, name
             var arguments = string.Join(",", methodSymbol.Parameters.Select(p => p.Name));
 
             source.Append($@"
-public {staticModifier} {asyncReturnType} {asyncMethodName}({parameters})
-{{
-    return Task.Run(() => {methodName}({arguments}));
-}}
-");
+            public {staticModifier} {asyncReturnType} {asyncMethodName}({parameters})
+            {{
+                return Task.Run(() => {methodSymbol.Name}({arguments}));
+            }}
+            ");
         }
 
         public void Initialize(InitializationContext context)

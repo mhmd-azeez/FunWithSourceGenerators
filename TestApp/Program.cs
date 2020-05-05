@@ -7,11 +7,11 @@ namespace TestApp
     {
         static async Task Main(string[] args)
         {
-           await SomeMethodAsync(42);
+           await PrintNumberAsync(42);
         }
 
-        [Asyncify]
-        static void SomeMethod(int number)
+       [Asyncify]
+        static void PrintNumber(int number)
         {
             Console.WriteLine(number);
         }
